@@ -2,14 +2,22 @@
  * NEXUS FALL KICK OFF — Volunteer sign-up backend
  * Vercel serverless function, backed by Upstash Redis.
  *
- * Requires env vars UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN
- * (auto-added by the Vercel Upstash integration, or set manually from
- * your Upstash dashboard under Vercel Project Settings > Environment Variables).
+ * Reads whichever REST credential pair Vercel's integration provisioned —
+ * plain Upstash naming (UPSTASH_REDIS_REST_URL/TOKEN) or the Vercel-KV-
+ * branded naming (KV_REST_API_URL/TOKEN) some Marketplace flows use for
+ * the same underlying database.
  */
 const { Redis } = require("@upstash/redis");
 const { randomUUID } = require("crypto");
 
-const redis = Redis.fromEnv();
+const restUrl = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+const restToken = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+if (!restUrl || !restToken) {
+  throw new Error(
+    "Missing Redis REST credentials — expected UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN in the project's environment variables."
+  );
+}
+const redis = new Redis({ url: restUrl, token: restToken });
 const KEY = "nexus:signups";
 
 /**
