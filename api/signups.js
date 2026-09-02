@@ -56,6 +56,29 @@ const PRESET_TAKEN = {
   crafts: 1 // Katie
 };
 
+/** How many roles one person can hold at once, across all slots. */
+const MAX_ROLES_PER_PERSON = 3;
+
+/** Basic abuse brake: writes allowed per IP address in the window below. */
+const RATE_LIMIT_MAX = 20;
+const RATE_LIMIT_WINDOW_SECONDS = 600; // 10 minutes
+
+/** Set in Vercel Project Settings > Environment Variables to enable /admin. */
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+
+function clientIp(req) {
+  const fwd = req.headers["x-forwarded-for"];
+  return (Array.isArray(fwd) ? fwd[0] : fwd || "unknown").split(",")[0].trim();
+}
+
+/** Returns true if this request should be blocked as too frequent. */
+async function rateLimited(req) {
+  const key = "nexus:ratelimit:" + clientIp(req);
+  const count = await redis.incr(key);
+  if (count === 1) await redis.expire(key, RATE_LIMIT_WINDOW_SECONDS);
+  return count > RATE_LIMIT_MAX;
+}
+
 async function readAll() {
   const raw = await redis.hgetall(KEY);
   if (!raw) return [];
@@ -82,6 +105,10 @@ module.exports = async (req, res) => {
     }
 
     if (action === "claim") {
+      if (await rateLimited(req)) {
+        return res.status(200).json({ ok: false, error: "Too many requests from this connection. Wait a bit and try again." });
+      }
+
       const slotId = String(body.slotId || "");
       const name = String(body.name || "").trim();
 
@@ -95,6 +122,14 @@ module.exports = async (req, res) => {
       const dupe = here.some((s) => s.name.trim().toLowerCase() === name.toLowerCase());
       if (dupe) return res.status(200).json({ ok: true, signups: all });
 
+      const mineCount = all.filter((s) => s.name.trim().toLowerCase() === name.toLowerCase()).length;
+      if (mineCount >= MAX_ROLES_PER_PERSON) {
+        return res.status(200).json({
+          ok: false,
+          error: "You're already signed up for " + MAX_ROLES_PER_PERSON + " roles — that's the max. Remove one first to switch."
+        });
+      }
+
       const room = CAPACITY[slotId] - (PRESET_TAKEN[slotId] || 0);
       if (here.length >= room) return res.status(200).json({ ok: false, error: "That role just filled up" });
 
@@ -104,7 +139,42 @@ module.exports = async (req, res) => {
     }
 
     if (action === "release") {
+      if (await rateLimited(req)) {
+        return res.status(200).json({ ok: false, error: "Too many requests from this connection. Wait a bit and try again." });
+      }
       const id = String(body.id || "");
+      await redis.hdel(KEY, id);
+      return res.status(200).json({ ok: true, signups: await readAll() });
+    }
+
+    if (action === "adminReassign") {
+      if (!ADMIN_PASSWORD) return res.status(200).json({ ok: false, error: "Admin password not configured on the server" });
+      if (String(body.password || "") !== ADMIN_PASSWORD) return res.status(200).json({ ok: false, error: "Wrong admin password" });
+
+      const id = String(body.id || "");
+      const slotId = String(body.slotId || "");
+      const name = String(body.name || "").trim();
+
+      if (!id) return res.status(200).json({ ok: false, error: "Missing id" });
+      if (!CAPACITY.hasOwnProperty(slotId)) return res.status(200).json({ ok: false, error: "Unknown role" });
+      if (name.length < 2) return res.status(200).json({ ok: false, error: "Name is required" });
+      if (name.length > 60) return res.status(200).json({ ok: false, error: "Name is too long" });
+
+      const all = await readAll();
+      const here = all.filter((s) => s.slotId === slotId && s.id !== id);
+      const room = CAPACITY[slotId] - (PRESET_TAKEN[slotId] || 0);
+      if (here.length >= room) return res.status(200).json({ ok: false, error: "Target role is full" });
+
+      await redis.hset(KEY, { [id]: JSON.stringify({ slotId, name, timestamp: Date.now() }) });
+      return res.status(200).json({ ok: true, signups: await readAll() });
+    }
+
+    if (action === "adminRemove") {
+      if (!ADMIN_PASSWORD) return res.status(200).json({ ok: false, error: "Admin password not configured on the server" });
+      if (String(body.password || "") !== ADMIN_PASSWORD) return res.status(200).json({ ok: false, error: "Wrong admin password" });
+
+      const id = String(body.id || "");
+      if (!id) return res.status(200).json({ ok: false, error: "Missing id" });
       await redis.hdel(KEY, id);
       return res.status(200).json({ ok: true, signups: await readAll() });
     }
