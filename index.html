@@ -338,6 +338,35 @@ footer p{margin:0 0 7px;line-height:1.6}
   *{animation-duration:.001ms !important;transition-duration:.001ms !important}
   .reveal{opacity:1;transform:none}html{scroll-behavior:auto}
 }
+
+/* --------- WHO HINT --------- */
+.who-hint{margin:8px 0 0;font-size:13px;color:var(--ink-soft)}
+
+/* --------- ADMIN --------- */
+#admin{display:none}
+#admin.show{display:block}
+.admin-lock{max-width:360px;margin:0 auto}
+.admin-lock input{
+  width:100%;padding:12px 14px;border:1px solid var(--card-line);border-radius:8px;
+  font-family:var(--f-body);font-size:15px;margin-bottom:10px;
+}
+.admin-table-wrap{overflow-x:auto;margin-top:10px}
+table.admin-table{width:100%;border-collapse:collapse;font-size:14px;background:var(--paper)}
+table.admin-table th{
+  text-align:left;padding:8px 10px;border-bottom:2px solid var(--card-line);
+  color:var(--ink-soft);font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;
+}
+table.admin-table td{padding:7px 10px;border-bottom:1px solid var(--rule);vertical-align:middle}
+table.admin-table input[type=text],table.admin-table select{
+  width:100%;padding:7px 9px;border:1px solid var(--card-line);border-radius:6px;font-family:var(--f-body);font-size:13.5px;
+}
+table.admin-table .locked-tag{color:var(--ink-soft);font-size:12.5px;font-style:italic}
+.admin-btn{
+  border:none;border-radius:6px;padding:6px 11px;font-size:13px;cursor:pointer;font-weight:600;white-space:nowrap;
+}
+.admin-btn.save{background:var(--navy);color:#fff;margin-right:6px}
+.admin-btn.remove{background:var(--need);color:#fff}
+.admin-top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px}
 </style>
 </head>
 <body>
@@ -545,6 +574,7 @@ footer p{margin:0 0 7px;line-height:1.6}
       <div class="field">
         <label for="who">Your Name</label>
         <input type="text" id="who" placeholder="First and last name" autocomplete="name" spellcheck="false">
+        <p class="who-hint">Remembered on this device &mdash; type the same name anytime to change or remove a shift you claimed.</p>
       </div>
       <button class="btn ghost" id="refreshBtn" style="width:auto;padding-inline:26px;align-self:end">Refresh</button>
     </div>
@@ -631,9 +661,32 @@ footer p{margin:0 0 7px;line-height:1.6}
     <div class="foot-bottom">
       <span>Nexus Student Ministry &bull; Fall Kick Off &bull; September 6</span>
       <span>Calvary Church, Muscatine</span>
+      <span><a href="?admin=1">Admin</a></span>
     </div>
   </div>
 </footer>
+
+<!-- ====== ADMIN ====== -->
+<section id="admin" class="tint">
+  <div class="wrap">
+    <div class="admin-top">
+      <h2 class="sec-h" style="margin:0;text-align:left">Admin &mdash; Manage Sign-Ups</h2>
+      <a href="?" style="font-size:14px">Exit admin</a>
+    </div>
+    <p class="sec-sub" style="margin:8px 0 22px;text-align:left">This table is the same names and roles already public on the main page. Saving a change or removing an entry requires the admin password below.</p>
+
+    <div class="admin-lock">
+      <input type="password" id="adminPass" placeholder="Admin password" autocomplete="off">
+    </div>
+
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Name</th><th>Role</th><th style="width:150px"></th></tr></thead>
+        <tbody id="adminBody"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
 
 <div class="toast" id="toast"></div>
 
@@ -714,8 +767,11 @@ const ROLES = [
 
 const TEAM_ORDER = { "Welcome Team":0, "Activities Team":1, "All Night":2 };
 
+function savedName_(){ try{ return localStorage.getItem("nexus:myName") || ""; }catch(e){ return ""; } }
+function saveName_(n){ try{ localStorage.setItem("nexus:myName", n); }catch(e){} }
+
 let signups = [];
-let myName  = "";
+let myName  = savedName_();
 let sortBy  = "need";
 let openOnly = false, mineOnly = false;
 let demo = !CONFIG.ENDPOINT;
@@ -791,10 +847,15 @@ async function claim(role){
     toast("You are in: " + role.name);
   }catch(err){
     signups = signups.filter(s=>s.id!==entry.id);
-    toast("Could not save that. Check your connection.", true);
+    toast(friendlyErr_(err, "Could not save that. Check your connection."), true);
     console.error(err);
   }
   render();
+}
+
+function friendlyErr_(err, fallback){
+  const m = err && err.message;
+  return (m && !/^HTTP \d/.test(m)) ? m : fallback;
 }
 
 async function release(entry){
@@ -806,7 +867,7 @@ async function release(entry){
     toast("Removed");
   }catch(err){
     signups = keep;
-    toast("Could not remove that. Try again.", true);
+    toast(friendlyErr_(err, "Could not remove that. Try again."), true);
     console.error(err);
   }
   render();
@@ -834,6 +895,7 @@ function sortRoles(list){
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 function render(){
+  adminRender();
   const total = ROLES.reduce((n,r)=>n+r.slots,0);
   const filled = ROLES.reduce((n,r)=>n+takersFor(r).length,0);
   const stillOpen = ROLES.filter(r=>statusOf(r)!=="full").length;
@@ -899,7 +961,8 @@ grid.addEventListener("click", e=>{
   const x = e.target.closest("[data-release]");
   if(x){ const s = signups.find(s=>s.id===x.dataset.release); if(s) release(s); }
 });
-$("#who").addEventListener("input", e=>{ myName = e.target.value.trim(); render(); });
+$("#who").value = myName;
+$("#who").addEventListener("input", e=>{ myName = e.target.value.trim(); saveName_(myName); render(); });
 document.querySelectorAll("[data-sort]").forEach(b=>{
   b.addEventListener("click", ()=>{
     document.querySelectorAll("[data-sort]").forEach(o=>o.classList.remove("on"));
@@ -912,6 +975,62 @@ $("#mineOnly").addEventListener("click", function(){
   mineOnly = !mineOnly; this.setAttribute("aria-pressed", mineOnly); render();
 });
 $("#refreshBtn").addEventListener("click", ()=>pull());
+
+/* ---------------- ADMIN ---------------- */
+function adminRender(){
+  const sec = $("#admin");
+  const body = $("#adminBody");
+  if(!sec || !body || !sec.classList.contains("show")) return;
+  if(!signups.length){
+    body.innerHTML = '<tr><td colspan="3" style="color:var(--ink-soft)">No sign-ups yet. (Preset leaders are hard-coded in index.html and do not appear here.)</td></tr>';
+    return;
+  }
+  body.innerHTML = signups.map(s=>{
+    const opts = ROLES.map(r=>'<option value="'+r.id+'"'+(r.id===s.slotId?' selected':'')+'>'+esc(r.name)+'</option>').join("");
+    return '<tr data-id="'+esc(s.id)+'">' +
+      '<td><input type="text" class="a-name" value="'+esc(s.name)+'"></td>' +
+      '<td><select class="a-role">'+opts+'</select></td>' +
+      '<td><button class="admin-btn save" data-save>Save</button> <button class="admin-btn remove" data-remove>Remove</button></td>' +
+    '</tr>';
+  }).join("");
+}
+
+if(new URLSearchParams(location.search).get("admin") === "1"){
+  $("#admin").classList.add("show");
+}
+
+$("#adminBody").addEventListener("click", async e=>{
+  const tr = e.target.closest("tr[data-id]");
+  if(!tr) return;
+  const id = tr.dataset.id;
+  const pass = $("#adminPass").value;
+  if(!pass){ toast("Enter the admin password first", true); return; }
+
+  if(e.target.closest("[data-save]")){
+    const name = tr.querySelector(".a-name").value.trim();
+    const slotId = tr.querySelector(".a-role").value;
+    try{
+      const data = await api({ action:"adminReassign", id, name, slotId, password: pass });
+      signups = data.signups || signups;
+      toast("Saved");
+      render();
+    }catch(err){
+      toast(err.message || "Could not save", true);
+    }
+  }
+
+  if(e.target.closest("[data-remove]")){
+    if(!confirm("Remove this sign-up?")) return;
+    try{
+      const data = await api({ action:"adminRemove", id, password: pass });
+      signups = data.signups || signups;
+      toast("Removed");
+      render();
+    }catch(err){
+      toast(err.message || "Could not remove", true);
+    }
+  }
+});
 
 const io = new IntersectionObserver(es=>{
   es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add("in"); io.unobserve(e.target); } });
